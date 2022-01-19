@@ -183,7 +183,7 @@
 </configuration>
 ```
 
-#### tag:\<encoder> & <pattern>
+#### tag:\<encoder> & \<pattern>
 
 > 配置日志输出格式
 
@@ -282,6 +282,19 @@
 <encoder>
     <pattern>%d{yyyy-MM-dd:HH:mm:ss.SSS} [%t] %p [%c] : %msg%n</pattern>
 </encoder>
+```
+
+### Asynchronous Mode
+> 异步输出日志只需要添加一个appender，并指向上例中的appender即可。
+```xml
+<appender name="ASYNC-INFO" class="ch.qos.logback.classic.AsyncAppender">
+    <!-- 丢弃日志，如果队列的80%已满，则会丢弃TRACE，DEBUG，INFO级别的日志-->
+    <!--discardingThreshold>0</discardingThreshold-->
+    <!-- 队列大小 -->
+    <!--queueSize>256</queueSize-->
+    <!-- 指定附加的appender，唯一 -->
+    <appender-ref ref="INFO" />
+</appender>
 ```
 
 ## Reference
