@@ -85,7 +85,7 @@ OK
 > Simple Dynamic String，Redis自行封装的一个结构。C语言字符串其实就是字符数组，其通过`\0`来填充数组末尾，表示字符串的结束。因此，除了结尾位置，字符串中不能含有`\0`，使得C语言的字符串只能保存文本数据，不能保存图片、音频、视频等二进制数据。并且在C语言中获取字符串长度，需要遍历字符数组，找到`\0`以后才能返回统计到字符个数。
 
 SDS结构如下：
-![sds1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/sds_1.jpg)
+![sds1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_sds_1.jpg)
 - lens：记录字符串长度。这样获取字符串长度的时间复杂度就做到了O(1)
 - alloc：分配给字符串的总空间长度，（alloc-lens）即为空闲空间。当修改字符串时，计算剩余空间是否够用。不够用自动将空间扩展至执行修改所需的大小，再执行修改操作
 - flags：sds类型。低3位代表sdshdr的类型，高5位只在sdshdr5中使用，表示字符串的长度，所以sdshdr5中没有len属性。另外，由于Redis对sdshdr5的定义是常量字符串，不支持扩容，所以不存在alloc属性
@@ -130,7 +130,7 @@ int main() {
     return 0;
 }
 ```
-![c_struct_1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/c_struct_1.jpg)
+![c_struct_1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_c_struct_1.jpg)
 > struct声明时加上`__attribute__ ((__packed__))`
 ```
 #include <stdio.h>
@@ -145,10 +145,92 @@ int main() {
     return 0;
 }
 ```
-![c_struct_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/c_struct_2.jpg)
+![c_struct_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_c_struct_2.jpg)
 
 ### 2.2 linked list
+> 底层双向链表结构
+```
+typedef struct listNode {
+  // prev node
+  struct listNode *preve;
+  // next node
+  struct listNode *next;
+  // value
+  void *value
+} listNode;
+```
+
+![listnode1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_listnode_1.jpg)
+
+> redis在`listNode`基础上又封装了一层`list`结构，包含了头尾节点，节点数量等属性以及dup，free，match函数。
+```
+typedef struct list {
+    // head node
+    listNode *head;
+    // tail node
+    listNode *tail;
+    // dup function
+    void *(*dup)(void *ptr);
+    // free function
+    void (*free)(void *ptr);
+    // match function
+    int (*match)(void *ptr, void *key);
+    // node count
+    unsigned long len;
+} list;
+```
+![listnode2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_listnode_2.jpg)
+
+> 链表的优点
+- listNode结构包含`prev`，`next`指针指向当前节点的前后节点，即获取某个节点的前后节点的时间复杂度`O(1)`
+- list结构包含`head`，`tail`指针指向列表的首尾节点，即获取整个列表的首尾节点的时间复杂度`O(1)`
+- list结构包含`len`属性，记录列表元素数量，时间复杂度`O(1)`
+- listNode使用指针`value`保存不同类型的值
+
+> 链表的缺点
+- 链表每个节点之间并不连续，无法很好的利用CPU缓存（不同于数组方式，数组方式是在内存上连续分配的一段空间）
+- 保存一个链表节点的值，都需要一个链表结构头的分配，内存开销更大
+
+> `Redis3.0`的List，当包含元素比较少时，采用`压缩列表`作为底层数据结构的实现，其优点是更节省内存空间。不过`压缩列表`也有其他性能问题。在`Redis3.2`后，List采用了新设计的`quicklist`作为底层数据结构的实现。
+> `Redis5.0`设计了新的`listpack`数据结构，沿用了紧凑型的内存布局，替代`压缩列表`。
 ### 2.3 zip list
+> `压缩列表`被设计成一种内存紧凑型的数据结构，占用一块连续的内存空间，不仅可以利用 CPU 缓存，而且会针对不同长度的数据，进行相应编码，这种方法可以有效地节省内存开销。
+
+> 压缩列表的缺点
+- 不能保存过多的元素，否则查询效率就会降低
+- 新增或修改某个元素时，压缩列表占用的内存空间需要重新分配，甚至可能引发连锁更新的问题
+
+压缩列表的结构：
+![ziplist1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_ziplist_1.jpg)
+- zlbytes：记录整个列表的占用的内存字节数
+- zltail：记录列表尾的自起始地址的偏移量
+- zllen：记录列表节点数量
+- zlend：标记压缩列表的结束点，固定值`0xFF`（十进制：255）
+
+> 在压缩列表中，获取首尾节点的时间复杂度O(1)，查找其他元素需要遍历，时间复杂度O(n)
+
+压缩列表entry的结构：
+![ziplist2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_ziplist_2.jpg)
+- prevlen：前一个节点的长度
+- encoding：当前节点的实际数据类型和长度
+- data：当前节点的实际数据
+
+> 连锁更新问题
+> 
+> 压缩列表新增某个元素或修改某个元素时，如果空间不不够，压缩列表占用的内存空间就需要重新分配。而当新插入的元素较大时，可能会导致后续元素的`prevlen`占用空间都发生变化，从而引起`连锁更新`问题，导致每个元素的空间都要重新分配，造成访问压缩列表性能的下降。
+
+压缩列表节点的 prevlen 属性会根据前一个节点的长度进行不同的空间大小分配：
+- 如果前一个节点的长度小于`254`字节，那么`prevlen`属性需要用`1`字节的空间来保存这个长度值；
+- 如果前一个节点的长度大于等于`254`字节，那么`prevlen`属性需要用`5`字节的空间来保存这个长度值；
+
+现在假设一个压缩列表中有多个连续的、长度在 250～253 之间的节点，如下图：
+![ziplist3](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_ziplist_3.jpg)
+因为这些节点长度值`<254`字节，所以`prevlen`属性需要用`1`字节的空间来保存这个长度值。
+这时，如果将一个长度`>=254`字节的新节点加入到压缩列表的表头节点，即新节点将成为`e1`的前置节点，如下图：
+![ziplist4](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_ziplist_4.jpg)
+因为`e1`节点的`prevlen`属性只有`1`个字节大小，无法保存新节点的长度，此时就需要对压缩列表的空间重分配操作，并将 e1 节点的`prevlen`属性从原来的`1`字节大小扩展为`5`字节大小。
+![ziplist5](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_ziplist_5.jpg)
+这种在特殊情况下产生的连续多次空间扩展操作就叫做`连锁更新`，就像多米诺牌的效应一样，第一张牌倒下了，推动了第二张牌倒下；第二张牌倒下，又推动了第三张牌倒下
 ### 2.4 hash table
 ### 2.5 int set
 ### 2.6 skip list
