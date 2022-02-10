@@ -269,7 +269,7 @@ typedef struct dictEntry {
   struct dictEntry *next;
 } ditEntry;
 ```
-![hash_1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_hash_1.jpg)
+![hashtable_1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_hashtable_1.jpg)
 
 - dictht：table指针指向一个数组，即哈希桶。每一个元素指向一个节点dictEntry
 - dictEntry：不仅包含指向键和值的指针，还有一个next指针指向下一个节点dictEntry，即拉链法解决哈希冲突
@@ -282,13 +282,13 @@ typedef struct dictEntry {
 > 拉链法解决哈希冲突
 
 dictEntry通过next指针指向下一个节点
-![hash_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_hash_2.jpg)
+![hashtable_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_hashtable_2.jpg)
 随着链表长度的增加，查询的时间复杂度会趋向于O(n)
 
 > rehash
 
 在1.4部分提到了Redis定义了两张哈希表，在进行rehash时，就需要用到第二张哈希表
-![hash_3](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_hash_3.jpg)
+![hashtable_3](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_hashtable_3.jpg)
 
 - 正常服务请求阶段，插入的数据都写`哈希表1`，此时`哈希表2`没有分配空间
 - 随着数据量的增加，触发rehash
@@ -308,6 +308,43 @@ dictEntry通过next指针指向下一个节点
 - 当负载因子>=5，此时哈希冲突非常严重，强制执行rehash
 
 ### 2.5 int set
+> 整数集合是Set类型底层数据结构实现之一。当一个Set对象只包含`整数值`元素，并且元素`数量`不多时。就会使用整数集合来实现。
+
+整数集合的结构
+```
+typedef struct intset {
+  // encoding
+  uint32_t encoding;
+  // length
+  uint32_t length;
+  // element array
+  int8_t contents[];
+} intset;
+```
+保存元素的容器是一个`contents`数组，虽然声明为`int8_t`类型，但是元素的真正类型取决于`encoding`。
+- encoding=`INTSET_ENC_INT16`：contents是`int16_t`类型的数组
+- encoding=`INTSET_ENC_INT32`：contents是`int32_t`类型的数组
+- encoding=`INTSET_ENC_INT64`：contents是`int64_t`类型的数组
+不同类型的contents数组，占用的空间大小也不同。
+> 整数集合的升级
+- 当向一个`int16_t`类型的整数集合，加入一个`int32_t`类型的新元素时，需要扩展contents数组的空间大小后再添加新元素。升级过程中也要维持整数集合的有序性
+- 整数集合升级不会重新分配一个新类型的数组，而是在原数组上扩展空间，然后再将每个元素按间隔类型大小分隔。如encoding=`INTSET_ENC_INT16`，每个元素间隔即为16位
+
+例如：
+1. 一个包含3个类型为`int16_t`元素的整数集合
+
+![intset_1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_intset_1.jpg)
+
+2. 现在，往整数集合添加一个新元素`65535`，这个元素需要`int32_t`类型来保存，故需要先将contents数组扩容。在原来空间的基础上，再扩容80位（4 * 32 - 3 * 16 = 80），这样可以保存下4个`int32_t`类型的元素。
+
+![intset_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_intset_2.jpg)
+
+3. contents扩容后，将之前的3个元素转换为`int32_t`类型，并且维持元素的顺序不变。最后添加新元素
+
+![intset_3](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_intset_3.jpg)
+> 通过这种动态`扩容`的机制，避免了内存空间的浪费。
+> 
+> 整数集合只支持升级，不支持降级。即删除`65535`这个元素，整数集合的数组还是`int32_t`类型。
 ### 2.6 skip list
 ### 2.7 quick list
 ### 2.8 list pack
