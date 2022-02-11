@@ -207,7 +207,7 @@ typedef struct list {
 - zllen：记录列表节点数量
 - zlend：标记压缩列表的结束点，固定值`0xFF`（十进制：255）
 
-> 在压缩列表中，获取首尾节点的时间复杂度O(1)，查找其他元素需要遍历，时间复杂度O(n)
+> 在压缩列表中，获取首尾节点的时间复杂度O(1)，查找其他元素需要遍历，时间复杂度O(N)
 
 压缩列表entry的结构：
 ![ziplist_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_ziplist_2.jpg)
@@ -283,7 +283,7 @@ typedef struct dictEntry {
 
 dictEntry通过next指针指向下一个节点
 ![hashtable_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_hashtable_2.jpg)
-随着链表长度的增加，查询的时间复杂度会趋向于O(n)
+随着链表长度的增加，查询的时间复杂度会趋向于O(N)
 
 > rehash
 
@@ -346,5 +346,101 @@ typedef struct intset {
 > 
 > 整数集合只支持升级，不支持降级。即删除`65535`这个元素，整数集合的数组还是`int32_t`类型。
 ### 2.6 skip list
-### 2.7 quick list
+> Zset类型的底层数据结构同时包含两种实现，`哈希表`+`跳表`，平均时间复杂度为O(logN)。利用`跳表`支持高效的范围查询（ZRANGEBYSCORE），通过`哈希表`索引，能够在常数时间复杂度获取到元素节点的SCORE。
+
+Zset的结构：
+```
+typedef struct zset {
+  dict *dict;
+  zskiplist *zsl;
+}} zset;
+```
+> 跳表的设计
+> 
+> 跳表是在链表（时间复杂度O(N)）的基础上改进得到的，是一种`多层`链表
+
+![skiplist_1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_skiplist_1.jpg)
+
+- `L0`层共`5`个节点，分别是1，2，3，4，5
+- `L1`层共`2`个节点，分别是2，3，5
+- `L2`层共`1`个节点，即3
+
+如果是以链表结构存储，先找到4节点需要从从头开始遍历，共查找4次。而使用跳表以后，可以由`l2`层跳至`3`节点，然后找到`4`。
+这个过程就是在多个层级上跳跃，最后找到目标元素。当数据量很大的时候，查询的时间复杂度为O(logN)。
+
+跳表结构：
+```
+typedef struct zskiplist {
+  // head & tail
+  struct ZskiplistNode *head, *tail;
+  // length
+  unsigned long length;
+  // level
+  int level;
+} zskiplist;
+```
+- head&tail：指向跳表的头尾节点，可以在O(1)时间复杂度下访问
+- length：跳表的长度，可以在O(1)时间复杂度下获取跳表包含的元素数量
+- level：最大层数
+
+- 跳表节点的结构：
+```text
+typedef struct zskiplistNode {
+    // 元素值
+    sds ele;
+    // 权重
+    double score;
+    // 前一个元素节点
+    struct zskiplistNode *backward;
+    // 节点level数组，保存每层的下一个节点和跨度
+    struct zskiplistLevel {
+        // 下一个节点
+        struct zskiplistNode *forward;
+        // 跨度
+        unsigned long span;
+    } level[];
+} zskiplistNode;
+```
+- 跳表中的节点通过`ele`变量保存元素实际数据，`score`保存元素权重
+- `backward`指向前一个节点，这样做是为了方便从尾节点开始倒序访问
+- 跳表包含了层级结构，每一个层级包含多个节点以指针连接，`zskiplistLevel`
+- level数组中每`一个元素`代表跳表的`一层`，level[0]表示第一层，level[1]表示第二层
+
+![skiplist_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_skiplist_2.jpg)
+
+> 跳表的查询过程
+
+- 从跳表头节点最高层开始，逐一遍历每一层
+  1. 如果当前节点`score<目标权重`，访问`该层下一节点`
+  2. 如果当前节点`score=目标权重 && ele<目标数据`，访问`该层下一节点`
+- 如果以上条件不满足，或者下一节点为`null`，则访问当前节点`level`数组里的下一层节点指针
+
+- ![skiplist_3](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_skiplist_3.jpg)
+
+例如：查找目标元素（ele：abcd，score：4）
+
+- 从头节点最高层开始，`l2`指向元素节点（ele：abc，score：3）。节点`score`比目标score小，则访问`l2`层下一节点`null`
+- 由于下一节点为`null`，则访问当前节点level数组下一层`level[1]`的节点指针
+- 元素节点`（ele：abc，score：3）`的`level[1]`指向`（ele：abcde，score：4）`，此时`score`与目标score一致，当`ele`大于目标ele
+- 继续跳到`（ele：abc，score：3）`的`level[0]`指向`（ele：abcd，score：4）`，该节点正是目标节点，查询结束
+
+> 跳表的层数设置
+> 
+> 相邻两层的节点数量比例，直接影响整个跳表的性能
+
+反例：
+
+![skiplist_4](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_skiplist_4.jpg)
+
+`l1`层节点只有1个，`l0`层有6个。想要找到节点6，基本就是在`l0`层遍历链表
+
+正例：
+
+![skiplist_5](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_skiplist_5.jpg)
+
+> 跳表相邻两层节点数比例为2：1，访问时间复杂度可以降低到O(logN)
+> 
+> 如果每次新增、删除节点时调整相邻层的节点数比例，开销较大。Redis采用了更为巧妙的方法，创建节点时，生成一个`[0，1]`范围上的随机数，如果随机数`小于0.25`（25%的概率），则层数`+1`，然后继续生成下一个随机数，重复以上过程直至结果`>0.25`结束。层数越高概率越低，层高最大限制`64`。
+
+## 2.7 quick list
 ### 2.8 list pack
