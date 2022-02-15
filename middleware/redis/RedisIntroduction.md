@@ -442,5 +442,42 @@ typedef struct zskiplistNode {
 > 
 > 如果每次新增、删除节点时调整相邻层的节点数比例，开销较大。Redis采用了更为巧妙的方法，创建节点时，生成一个`[0，1]`范围上的随机数，如果随机数`小于0.25`（25%的概率），则层数`+1`，然后继续生成下一个随机数，重复以上过程直至结果`>0.25`结束。层数越高概率越低，层高最大限制`64`。
 
-## 2.7 quick list
+### 2.7 quick list
+> `Redis3.0`之前，List类型的底层数据结构又`双向链表`和`压缩列表`实现。`Redis3.2`后，改为`quicklist`实现。
+> 
+> `quicklist`就是`双向链表`+`压缩列表`的组合，因为`quicklist`本身是一个`链表`，其内部每一个元素又是一个`压缩列表`。
+> 
+> `压缩列表`通过紧凑型的布局节省了内存开销，但是随着元素数量增多或者元素变大，可能引发`连锁更新`风险，造成性能下降。故`quicklist`通过控制每个元素节点中`压缩列表`的大小或者数量，来避免`连锁更新`。
+
+quicklist的结构：
+```
+typedef struct quicklist {
+  // head
+  struct quicklistNode *head;
+  // tail
+  struct quicklistNode *tail;
+  // length
+  unsigned long len;
+  ...
+} quicklist;
+```
+quicklistNode的结构：
+```
+typedef struct quicklistNode {
+  // prev node
+  struct quicklistNode *prev;
+  // next node
+  struct quicklistNode *next;
+  // point to zip list
+  unsigned char *zl;
+  // zip list byte size
+  unsigned int sz;
+  // zip list count
+  unsigned int count;
+}
+```
+> 可以看到`quicklistNode`结构体里包含了`prev`和`next`指针，形成了`双向链表`。每个元素节点不再单纯保存元素值，而是指向`zp`（压缩列表）。
+![quicklist_1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_quicklist_1.jpg)
+- 每次添加一个元素，不会像普通链表那样直接新增节点。而是`先检查目标位置的压缩列表是否能容纳新元素，优先保存到压缩列表中。如果不行再新增一个quicklistNode节点加入链表
+
 ### 2.8 list pack
