@@ -481,3 +481,20 @@ typedef struct quicklistNode {
 - 每次添加一个元素，不会像普通链表那样直接新增节点。而是`先检查目标位置的压缩列表是否能容纳新元素，优先保存到压缩列表中。如果不行再新增一个quicklistNode节点加入链表
 
 ### 2.8 list pack
+> quicklist通过控制quicklistNode结构里压缩列表的元素大小或者个数来减少连锁更新带来的影响，但是受限于它的结构设计，并没有彻底解决。
+> 
+> 于是在`Redis5.0`，新设计了一个数据结构即`listpack`来替代压缩列表。其节点不再保存前一个节点的长度。
+
+listpack的结构：
+![listpack_1](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_listpack_1.jpg)
+
+- listpack头包含两个属性，分别记录总字节数和元素数量，尾部也包含结尾标识
+- listpack entry即为元素节点
+
+![listpack_2](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_intro_listpack_2.jpg)
+
+- encoding：元素的编码类型，
+- data：实际数据
+- len：encoding + data 占用总长度
+
+> 可见listpack entry只记录自己的长度。当往listpack新增一个元素，不影响其他节点的长度，完全避免了连锁更新
