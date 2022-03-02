@@ -18,6 +18,7 @@ public class Singleton {
 ```java
 public class Singleton {
 
+    // use volatile to ensure visibility & compiler reordering 
     private volatile static Singleton instance;
 
     private Singleton(){}
