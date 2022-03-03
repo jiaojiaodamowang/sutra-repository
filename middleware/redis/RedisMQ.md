@@ -249,4 +249,69 @@ Stream业务模型：
 业务模型：
 ![redis_mq_8](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_mq_8.jpg)
 
+> Q：消息处理异常时，Stream如何保证消息不丢失重新消费？
+> 
+> A：拉取消息时，用到了消息唯一ID，正常消费后，利用`XACK`命令告知Redis这条消息标记为`已处理`
+
+```text
+// group1下 1618469123380-0 消息处理完成
+127.0.0.1:6379> XACK queue group1 1618469123380-0
+```
+
+业务模型：
+![redis_mq_9](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_mq_9.jpg)
+
+如果消费异常或者宕机，消费者未发送`XACK`命令。待重新上线拉取消息时候，Redis会重新发送该消息。
+```text
+127.0.0.1:6379> XREADGROUP GROUP group1 consumer COUNT 5 STREAMS queue >
+// 之前没消费成功的消息依旧可以拉取到
+1) 1) "queue"
+   2) 1) 1) "1618469123380-0"
+         2) 1) "name"
+            2) "zhangsan"
+```
+
+> Q：Stream的数据是否会写入RDB和AOF做持久化？
+> 
+> A：Stream是新增加的数据类型，与其他数据类型一样。每个操作也会写入RDB和AOF。
+
+> Q：消息堆积时，Stream如何处理？
+> 
+> A：发布消息时可以指定队列的最大长度。当队列超过最大长度，旧消息会被删除。
+```text
+127.0.0.1:6379> XADD queue MAXLEN 10000 * name zhangsan
+"1618469123380-0"
+```
+
 ## 与MQ中间件比较
+> 专业的消息中间件，需要满足以下两点：
+
+1. 消息不丢失
+2. 消息可堆积
+
+宏观来看是这样一个业务模型：
+![redis_mq_10](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_mq_10.jpg)
+
+> 1.生产者
+
+1. 发送消息失败：可能因为网络问题或者其他原因，消息未发送，中间件直接返回失败。
+2. 不确定消息是否发送成功：网络问题，发送消息成功，接收响应结果失败。
+
+> 生产者一般会设置最大重试次数，超过上线记录日志报警处理。因此为了保证消息不丢，宁可重发，这就可能造成消息重复。故需要消费者实现幂等。
+
+> 2.消费者
+>
+> 消费者处理完消息需要通知中间件该消息已被消费。
+
+> 3.中间件
+
+1. AOF持久化时是异步的，期间Redis宕机可能丢数据
+2. 主从复制也是异步的，主从切换时候可能丢数据
+
+可见Redis无法保证数据完整性，而Kafka这些消息中间件存在多节点、副本机制来保证消息的完整性。
+
+Redis的Stream通过指定队列最大长度，但是随着消息堆积，内存资源紧张，最终存在OOM风险。Kafka会见数据存到磁盘上，成本比内存低得多。
+
+## 总结
+
+![redis_mq_11](https://github.com/jiaojiaodamowang/sutra-repository/blob/main/middleware/redis/resource/redis_mq_11.jpg)
